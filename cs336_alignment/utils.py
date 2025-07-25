@@ -43,6 +43,45 @@ def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], t
         "response_mask": response_mask_tensor
     }
 
+def get_response_log_probs(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    labels: torch.Tensor,
+    return_token_entropy: bool = False
+) -> dict[str, torch.Tensor]:
+    logits = model(input_ids).logits   # b s v
+    log_softmax = torch.nn.functional.log_softmax(logits)  # b s v
+    label_token_log_softmax = log_softmax.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+
+    if return_token_entropy:
+        entropy = compute_entropy(logits)
+        return {
+            "log_probs": label_token_log_softmax,
+            "token_entropy": entropy
+        }
+    else:
+        return {
+            "log_probs": label_token_log_softmax
+        }
+
+def masked_normalize(
+        tensor: torch.Tensor,
+        mask: torch.Tensor,
+        dim: int | None=None,
+        normalize_constant: float = 1.0,
+) -> torch.Tensor:
+    masked_tensor = torch.where(mask, tensor, torch.zeros_like(tensor)) # b s v
+    return torch.sum(masked_tensor, dim=dim) / normalize_constant
+
+# def masked_normalize(
+#     tensor: torch.Tensor,
+#     mask: torch.Tensor,
+#     dim: int | None = None,
+#     normalize_constant: float = 1.0,
+# ) -> torch.Tensor:
+#     masked_tensor = torch.where(mask, tensor, torch.zeros_like(tensor))
+#     return torch.sum(masked_tensor, dim=dim) / normalize_constant
+
 def compute_entropy(logits: torch.Tensor) -> torch.Tensor:
     ### logits: b s v
     ### return: b s
@@ -51,3 +90,17 @@ def compute_entropy(logits: torch.Tensor) -> torch.Tensor:
     ce = -torch.sum(p*logp, dim=-1)
     return ce
     
+def sft_microbatch_train_step(
+        policy_log_probs: torch.Tensor,
+        response_mask: torch.Tensor,
+        gradient_accumulation_steps: int,
+        normalize_constant: float = 1.0,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    masked_normalized_probs = masked_normalize(
+        policy_log_probs, response_mask, -1, normalize_constant
+    )
+    loss = -masked_normalized_probs.mean()
+    loss = loss / gradient_accumulation_steps
+    loss.backward()
+
+    return loss, {}

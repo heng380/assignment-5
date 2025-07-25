@@ -1,7 +1,7 @@
 from vllm import LLM, SamplingParams
 from typing import Callable, List, Tuple
 from cs336_alignment.drgrpo_grader import r1_zero_reward_fn
-
+import re
 import json
 import os
 from collections import Counter
@@ -11,9 +11,18 @@ QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/model/Qwe
 PROMPT_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/prompts/r1_zero.prompt"
 MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k"
 
+ANS_RE = re.compile(r"####\s*([\-0-9\.\,]+)")
+
+
+def extract_reference_answer(answer: str) -> str:
+    match = ANS_RE.search(answer)
+    if match:
+        return match.group(1).strip().replace(",", "")
+    return "[invalid]"
+
 def run_vllm(vllm_model, prompts, sampling_params) -> List[str]:
     result = vllm_model.generate(prompts, sampling_params)
-    texts = [output.outputs[0].text for output in result]
+    texts = [output.outputs[0].text.strip() for output in result]
     return texts
 
 def evaluate_vllm(
@@ -26,10 +35,12 @@ def evaluate_vllm(
     responses = run_vllm(vllm_model, prompts, eval_sampling_params)
     allinfo_dict_list = []
     for response, answer, prompt in zip(responses, answers, prompts):
-        reward_dict = reward_fn(response, answer)
+        extracted_answer = extract_reference_answer(answer)
+        reward_dict = reward_fn(response, extracted_answer)
         reward_dict["response"] = response
         reward_dict["answer"] = answer
         reward_dict["prompt"] = prompt
+        reward_dict["extracted_answer"] = extracted_answer
         allinfo_dict_list.append(reward_dict)
     return allinfo_dict_list
 #%%
@@ -79,7 +90,7 @@ if __name__ == "__main__":
         outputs = llm.generate(prompts, sampling_params)
         for output in outputs:
             prompt = output.prompt
-            generated_text = output.outputs[0].text
+            generated_text = output.outputs[0].text.strip()
             print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
         ## end of example
     
