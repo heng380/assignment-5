@@ -16,17 +16,17 @@ from baseline import run_vllm
 QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/model/Qwen2.5-Math-1.5B"
 PROMPT_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/prompts/r1_zero.prompt"
 TEST_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/test.jsonl"
-OUTPUT_PATH = "/home/aiscuser/repos/assignment5-alignment/data/sft/"
+OUTPUT_PATH = "/home/aiscuser/repos/assignment5-alignment/data/sft"
 MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/baseline_result.jsonl"
 SEED = 69
 torch.manual_seed(SEED)
 random.seed(SEED)
-device_train = "cuda:2"
-device_vllm = "cuda"
-micro_batch_size=2
-n_sft_steps = 64
-n_grad_accum_steps = 32
-eval_steps = 8
+device_train = "cuda:3"
+device_vllm = "cuda:1"
+micro_batch_size=8
+n_sft_steps = 256
+n_grad_accum_steps = 8
+eval_steps = 16
 
 ANS_RE = re.compile(r"####\s*([\-0-9\.\,]+)")
 
@@ -94,7 +94,7 @@ def prepare_train_test(train_sample)->tuple[list[str], list[str]]:
 
 def get_batch(tokenized_train_data: dict[str, torch.Tensor], batch_size: int, device: str):
     batch_indices = random.sample(range(len(tokenized_train_data["input_ids"])), batch_size)
-    return {k: v[batch_indices].to(device) for k,v in tokenize_prompt_and_output}
+    return {k: v[batch_indices].to(device) for k,v in tokenized_train_data.items()}
 
 def evaluate_vllm(
     vllm_model: LLM,
@@ -111,7 +111,7 @@ def evaluate_vllm(
         allinfo_dict_list.append(reward_dict)
     overview = {"correct":0, "format_wrong":0, "answer_wrong":0, "count":0}
     for reward in allinfo_dict_list:
-        count += 1
+        overview["count"] += 1
         if reward["reward"] == 1:
             overview["correct"] += 1
         elif reward["format_reward"] == 1:
@@ -119,12 +119,17 @@ def evaluate_vllm(
         else:
             overview["format_wrong"] += 1
     return overview
+def to_float(val):
+    if isinstance(val, torch.Tensor):
+        return val.float().item()
+    return float(val)
 
 def main(train_samples:list[int], dataset_type:str, MATH_DATA_PATH:str) -> None:
     for train_sample in train_samples:
+        print (f"train candidate: {train_sample}")
         wandb.init(project="cs336-sft",
             name=f"train_sample_{train_sample}_dataset_{dataset_type}_math_sft",
-            configs={
+            config={
                 "train_sample": train_sample,
                 "dataset_type": dataset_type
                 }
@@ -165,37 +170,61 @@ def main(train_samples:list[int], dataset_type:str, MATH_DATA_PATH:str) -> None:
                     log_probs = response_log_probs["log_probs"]
                     entropy = response_log_probs["token_entropy"]
 
-                    next_batch = get_batch(tokenized_train_data, micro_batch_size, device_train)
+                    # next_batch = get_batch(tokenized_train_data, micro_batch_size, device_train)
 
                     loss, _ = sft_microbatch_train_step(log_probs, response_mask, n_grad_accum_steps)
-                    input_ids = train_batch["input_ids"].to(device_train)
-                    labels = train_batch["labels"].to(device_train)
-                    response_mask = train_batch["response_mask"].to(device_train)
+                    if j_grad_accum_step == n_grad_accum_steps - 1:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-                    if i_sft_step % eval_steps == 0:
-                        load_policy_into_vllm_instance(model, vllm)
-                        sampling_params = SamplingParams(
-                            temperature = 1.0, top_p=1.0, max_tokens=1024, stop=["</answer>"], include_step_str_in_output=True
-                        )
-                        overview = evaluate_vllm(
-                            vllm_model=vllm,
-                            reward_fn=r1_zero_reward_fn,
-                            prompts = [data["prompt"] for data in test_prompt],
-                            answers = [data["answer"] for data in test_prompt],
-                            eval_sampling_params = sampling_params
-                        )
-                        accuracy = overview["correct"] / overview["count"]
-                        print (f"evaluation at step {i_sft_step}")
+                        optimizer.step()
+                        optimizer.zero_grad()
+                        print (f"Training summary at step {i_sft_step + 1}:")
+                        print (f"loss: {loss:.6f}")
+                        print (f"Global Entropy: {entropy.mean().item():.6f}")
+                        print (f"Response Entropy: {entropy[response_mask].mean().item():.6f}")
+                        print (f"Prompt Entropy: {entropy[~response_mask].mean().item():.6f}")
+                        wandb.log({
+                            "train/loss": to_float(loss),
+                            "train/entropy": to_float(entropy.mean()),
+                            "train/response entropy": to_float(entropy[response_mask].mean()),
+                            "train/prompt entropy": to_float(entropy[~response_mask].mean()),
+                            "train_step": i_sft_step + 1
+                        })
 
+                train_batch = get_batch(tokenized_train_data, micro_batch_size, device_train)
+                input_ids = train_batch["input_ids"].to(device_train)
+                labels = train_batch["labels"].to(device_train)
+                response_mask = train_batch["response_mask"].to(device_train)
 
+            if i_sft_step % eval_steps == 0:
+                load_policy_into_vllm_instance(model, vllm)
+                sampling_params = SamplingParams(
+                    temperature = 1.0, top_p=1.0, max_tokens=1024, stop=["</answer>"], include_stop_str_in_output=True
+                )
+                overview = evaluate_vllm(
+                    vllm_model=vllm,
+                    reward_fn=r1_zero_reward_fn,
+                    prompts = [data["prompt"] for data in test_prompt],
+                    answers = [data["answer"] for data in test_prompt],
+                    eval_sampling_params = sampling_params
+                )
+                accuracy = overview["correct"] / overview["count"]
+                print (f"evaluation at step {i_sft_step+1}")
+                print (f"Correct answer:{overview["correct"]}")
+                print (f"Accuracy: {accuracy:.4f}")
+                print (f"Wrong answer with correct format:{overview["answer_wrong"]}")
+                print (f"Wrong format:{overview["format_wrong"]}")
 
+                wandb.log({
+                    "eval/correct": overview["correct"],
+                    "eval/wrong answer": overview["answer_wrong"],
+                    "eval/wrong format": overview["format_wrong"],
+                    "eval/accuracy": accuracy,
+                    "eval_step": i_sft_step + 1
+                })
 
-
-
-
-
-
-
+                model.save_pretrained(save_directory=OUTPUT_PATH)
+                tokenizer.save_pretrained(save_directory=OUTPUT_PATH)
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -219,11 +248,11 @@ if __name__ == "__main__":
     # for true run
     if args.command == "train":
         if args.use_correct == False:
-            MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/baseline_result.jsonl"
-            train_samples = [128, 256, 512, 1024, 7473]
+            MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/processed_train.jsonl"
+            train_samples = [256]
             dataset_type = "raw"
         else:
-            MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/train_correct.jsonl"
+            MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/correct.jsonl"
             train_samples = [215]
             dataset_type = "correct"
     
