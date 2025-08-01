@@ -15,7 +15,8 @@ from baseline import run_vllm
 from transformers import PreTrainedTokenizerBase
 import torch.nn as nn
 
-QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/model/Qwen2.5-Math-1.5B"
+# QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/model/Qwen2.5-Math-1.5B"
+QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/sft"
 PROMPT_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/prompts/r1_zero.prompt"
 TEST_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/test.jsonl"
 OUTPUT_PATH = "/home/aiscuser/repos/assignment5-alignment/data/ei"
@@ -26,17 +27,24 @@ random.seed(SEED)
 device_train = "cuda:3"
 device_vllm = "cuda:1"
 micro_batch_size=8
-n_sft_steps = 256
 n_grad_accum_steps = 8
 eval_steps = 16
 
+
 ANS_RE = re.compile(r"####\s*([\-0-9\.\,]+)")
 
-def extract_reference_answer(answer: str) -> str:
+def extract_reference_answer2(answer: str) -> str:
     match = ANS_RE.search(answer)
     if match:
         return match.group(1).strip().replace(",", "")
     return "[invalid]"
+
+def extract_reference_answer(answer: str) -> str:
+    try:
+        extracted_answer = answer.split("<answer> ")[1].split(" </answer>")[0]
+        return extracted_answer.strip()
+    except:
+        return "[invalid]"
 
 def format_qa(data:list[str])->list[str]:
     formated_qa = []
@@ -110,7 +118,7 @@ def evaluate_vllm(
     responses = run_vllm(vllm_model, prompts, eval_sampling_params)
     allinfo_dict_list = []
     for response, answer, prompt in zip(responses, answers, prompts):
-        extracted_answer = extract_reference_answer(answer)
+        extracted_answer = extract_reference_answer2(answer)
         reward_dict = reward_fn(response, extracted_answer)
         allinfo_dict_list.append(reward_dict)
     overview = {"correct":0, "format_wrong":0, "answer_wrong":0, "count":0}
@@ -127,39 +135,79 @@ def to_float(val):
     if isinstance(val, torch.Tensor):
         return val.float().item()
     return float(val)
-def get_ei_sft_batch(tokenized_train_data, batch_size, device):
-    batch_indices = random.sample(range(len(tokenized_train_data["input_ids"]), batch_size))
+def get_ei_sft_batch(tokenized_train_data, batch_size):
+    batch_indices = random.sample(range(len(tokenized_train_data["input_ids"])), batch_size)
     return {k: v[batch_indices] for k, v in tokenized_train_data.items()}
 
 
-def ei_sft(sft_data: list[dict[str, str]], model:torch.nn.Module, tokenizer:PreTrainedTokenizerBase, vllm:torch.nn.Module, epoch:int, ):
+def ei_sft(sft_data: list[dict[str, str]], model:torch.nn.Module, tokenizer:PreTrainedTokenizerBase, vllm:torch.nn.Module, epoch:int, test_qa: list[dict[str, str]], global_step: int=0):
     tokenized_train_data = tokenize_prompt_and_output(prompt_strs=[data["prompt"] for data in sft_data], 
                                                       output_strs=[data["response"] for data in sft_data],
                                                       tokenizer=tokenizer)
-    
-    optimizer = torch.optim.AdamW(model.parameters(), lr=8e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-6)
     
     amp_ctx = torch.amp.autocast(device_type=device_train, dtype=torch.bfloat16)
-    n_sft_steps = len(sft_data) * epoch // (n_grad_accum_steps * micro_batch_size)
-
+    n_sft_steps = len(sft_data) * epoch // (n_grad_accum_steps * micro_batch_size) + 1
+    print (f"sft steps in this ei step: {n_sft_steps}")
     for i in range(n_sft_steps):
         for j in range(n_grad_accum_steps):
             with amp_ctx:
                 train_batch = get_ei_sft_batch(tokenized_train_data, micro_batch_size)
-                input_ids = train_batch["input_ids"]
-                labels = train_batch["labels"]
-                response_mask = train_batch["response_mask"]
+                input_ids = train_batch["input_ids"].to(device_train)
+                labels = train_batch["labels"].to(device_train)
+                response_mask = train_batch["response_mask"].to(device_train)
                 response_log_probs = get_response_log_probs(model, input_ids, labels, True)
-                loss, _ = sft_microbatch_train_step(response_log_probs, response_mask, n_grad_accum_steps)
+                loss, _ = sft_microbatch_train_step(response_log_probs["log_probs"], response_mask, n_grad_accum_steps)
                 if j == n_grad_accum_steps - 1:
-                    nn.util
+                    nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    entropy = response_log_probs["token_entropy"]
+                    print (f"Train step summary {i}/{n_sft_steps}:")
+                    print (f"Training loss: {loss:.6f}")
+                    print (f"Total response entropy: {entropy.mean().item():.4f}")
+                    print (f"Response entropy: {entropy[response_mask].mean().item():.4f}")
+                    print (f"Prompt entropy: {entropy[~response_mask].mean().item():.4f}")
 
+                    wandb.log({
+                        "train/loss": to_float(loss),
+                        "train/entropy": to_float(entropy.mean()),
+                        "train/response entropy": to_float(entropy[response_mask].mean()),
+                        "train/prompt entropy": to_float(entropy[~response_mask].mean()),
+                        "train_step": global_step+1
+                    })
+                    global_step += 1
 
-    
+        if (global_step % eval_steps == 0):
+            load_policy_into_vllm_instance(model, vllm)
+
+            sampling_params = SamplingParams(temperature = 1.0, top_p=1.0, max_tokens=1024, min_tokens=4, stop=["</answer>"], include_stop_str_in_output=True)
+            test_prompt = [data["prompt"] for data in test_qa]
+            test_answer = [data["answer"] for data in test_qa]
+            overview = evaluate_vllm(vllm, r1_zero_reward_fn, test_prompt, test_answer, sampling_params)
+
+            print (f"evaluation at step {i}:")
+            print (f"Correct number: {overview["correct"]}")
+            print (f"Accurancy: {overview["correct"] / overview["count"] * 100:.2f}%")
+            print (f"Wrong answer with correct format:{overview["answer_wrong"]}")
+            print (f"Wrong format:{overview["format_wrong"]}")
+
+            wandb.log({
+                "eval/correct": overview["correct"],
+                "eval/correct format with wrong answer": overview["answer_wrong"],
+                "eval/wrong format": overview["format_wrong"],
+                "eval/accuracy": overview["correct"] / overview["count"],
+                "eval_step": global_step+1
+            })
+
+            model.save_pretrained(save_directory=OUTPUT_PATH)
+            tokenizer.save_pretrained(save_directory=OUTPUT_PATH)
+    return model, global_step
 
 def main(n_ei_steps:int, batch_size:int, epochs:int, ei_num_g:int) -> None:
+    global_step = 0
     wandb.init(project="cs336-ei-sft",
-        name=f"step_{n_ei_steps}_batch_size_{batch_size}_epochs_{epochs}_math_ei_sft",
+        name=f"step_{n_ei_steps}_batch_size_{batch_size}_epochs_{epochs}_math_ei_sft_after_sft",
         config={
             "n_ei_steps": n_ei_steps,
             "batch_size": batch_size,
@@ -184,16 +232,18 @@ def main(n_ei_steps:int, batch_size:int, epochs:int, ei_num_g:int) -> None:
     train_qa, test_qa = prepare_train_test()
 
     for i in range(n_ei_steps):
-        print (f"Expert iteration step: {n_ei_steps}")
-        train_batch = get_train_inf_batch(prompts = [i["prompt"] for i in train_qa], train_qa=train_qa, batch_size=batch_size)
+        print ("------------------------------")
+        print (f"Expert iteration step: {i}")
+        print (f"Global step now: {global_step}")
+        prompts, train_qa = get_train_inf_batch(prompts = [i["prompt"] for i in train_qa], train_qa=train_qa, batch_size=batch_size)
 
         sampling_params = SamplingParams(temperature = 1.0, top_p=1.0, max_tokens=1024, min_tokens=4, stop=["</answer>"], include_stop_str_in_output=True, n=ei_num_g)
-        outputs = vllm.generate(train_batch, sampling_params)
+        outputs = vllm.generate(prompts, sampling_params)
         responses = [[o.text.strip() for o in output.outputs] for output in outputs]
         expert_roll = []
         overview = {"total": 0, "correct": 0, "format_wrong": 0, "format_correct_answer_wrong": 0}
 
-        for response, train_data in zip(responses, train_batch):
+        for response, train_data in zip(responses, train_qa):
             answer = train_data["answer"]
             extracted_answer = extract_reference_answer(answer)
 
@@ -211,18 +261,19 @@ def main(n_ei_steps:int, batch_size:int, epochs:int, ei_num_g:int) -> None:
                     overview["format_correct_answer_wrong"] += 1
                 else:
                     overview["format_wrong"] += 1
-    
-        print (f"correct examples:")
-        print (f"prompt:{expert_roll[0]["prompt"]}")
-        print (f"response: {expert_roll[0]["response"]}")
 
         print (f"correction check:")
+        print (f"correct count: {overview["correct"]}")
         print (f"acccuracy: {overview["correct"]/overview["total"] * 100:.2f}%")
         print (f"format correct but answer wrong: {overview["format_correct_answer_wrong"]/overview["total"] * 100:.2f}%")
-        print (f"answer wrong: {overview["answer_wrong"]/overview['total'] * 100:.2f}%")
+        print (f"answer wrong: {overview["format_wrong"]/overview['total'] * 100:.2f}%")
+
+        # print (f"correct examples:")
+        # print (f"prompt:{expert_roll[0]["prompt"]}")
+        # print (f"response: {expert_roll[0]["response"]}")
 
         sft_data = expert_roll
-        ei_sft(sft_data, model, tokenizer, vllm)
+        model, global_step = ei_sft(sft_data, model, tokenizer, vllm, epochs, test_qa, global_step)
 
         load_policy_into_vllm_instance(model, vllm)
 
@@ -235,13 +286,14 @@ if __name__ == "__main__":
 
     # train_parser = subparsers.add_parser("train")
     parser.add_argument("--n_ei_steps", type=int, default=5)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=1024)
+    parser.add_argument("--epochs", type=int, default=4)
     parser.add_argument("--ei_num_g", type=int, default=5)
     args = parser.parse_args()
     n_ei_steps = args.n_ei_steps
-    batch_size = parser.batch_size
-    epochs = parser.epochs
+    batch_size = args.batch_size
+    epochs = args.epochs
+    ei_num_g = args.ei_num_g
     main(n_ei_steps, batch_size, epochs, ei_num_g)
     # # for test
     # if args.command == "test":

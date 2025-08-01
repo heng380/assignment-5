@@ -147,7 +147,7 @@ def main(train_samples:list[int], dataset_type:str, MATH_DATA_PATH:str) -> None:
         )
         tokenizer = AutoTokenizer.from_pretrained(QWEN_MATH_BASE_PATH)
 
-        optimizer = torch.optim.AdamW(model.parameters(), lr=8e-5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
         
         amp_ctx = torch.amp.autocast(device_type=device_train, dtype=torch.bfloat16)
 
@@ -249,7 +249,7 @@ if __name__ == "__main__":
     if args.command == "train":
         if args.use_correct == False:
             MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/processed_train.jsonl"
-            train_samples = [7000]
+            train_samples = [128]
             dataset_type = "raw"
         else:
             MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/correct.jsonl"
