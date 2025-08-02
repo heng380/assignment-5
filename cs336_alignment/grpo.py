@@ -1,5 +1,6 @@
 import torch
 from einops import repeat
+from typing import Literal
 def compute_group_normalized_reward(
     reward_fn,
     rollout_responses,
@@ -58,3 +59,31 @@ def compute_grpo_clip_loss(
         "cliped": v > v_clip
     }
     return -torch.min(v, v_clip), meta
+
+def compute_policy_gradient_loss(
+    policy_log_probs: torch.Tensor,
+    loss_type: Literal["no_baseline", "reinforce_with_baseline", "grpo_clip"],
+    raw_rewards: torch.Tensor | None=None,
+    advantages: torch.Tensor | None=None,
+    old_log_probs: torch.Tensor | None=None,
+    cliprange: float | None=None
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    if loss_type == "grpo_clip":
+        assert advantages is not None
+        assert old_log_probs is not None
+        assert cliprange is not None
+        return compute_grpo_clip_loss(advantages, policy_log_probs, old_log_probs, cliprange)
+    elif loss_type == "no_baseline":
+        assert raw_rewards is not None
+        return compute_naive_policy_gradient_loss(raw_rewards, policy_log_probs), {}
+    elif loss_type == "reinforce_with_baseline":
+        assert advantages is not None
+        return compute_naive_policy_gradient_loss(advantages, policy_log_probs), {}
+
+def masked_mean(
+    tensor: torch.Tensor,
+    mask: torch.Tensor,
+    dim: int | None = None
+) -> torch.Tensor:
+    masked_tensor = torch.where(mask, tensor, torch.zeros_like(tensor))
+    return torch.sum(masked_tensor, dim=dim) / torch.sum(mask, dim=dim)
