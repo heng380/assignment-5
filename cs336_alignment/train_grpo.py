@@ -77,6 +77,38 @@ def train_grpo():
 
     for grpo_step in range(n_grpo_steps):
         rollout_dataset = random.sample(train_data, n_prompts_per_rollout_batch)
+        rollout_prompts = [data["prompt"] for data in rollout_dataset]
+        rollout_answers = [data["answer"] for data in rollout_dataset]
+        
+        sampling_params = SamplingParams(temperature = sampling_temperature,
+                                        top_p = 1.0, max_tokens=sampling_max_tokens,
+                                        min_tokens=sampling_min_tokens,
+                                        stop=["</answer>"],
+                                        include_stop_str_in_output=True,
+                                        n=group_size, seed=SEED)
+        outputs = vllm.generate(rollout_prompts, sampling_params)
+
+        repeated_answers = []
+        responses = []
+        prompts = []
+        for output, answer in zip(outputs, rollout_answers):
+            prompt = output.prompt
+            for rollout in output.outputs:
+                responses.append(rollout.text)
+                prompts.append(prompt)
+                repeated_answers.append(answer)
+        tokenizations = tokenize_prompt_and_output(prompts, responses, tokenizer)
+        input_ids, labels, response_mask = tokenizations["input_ids"], tokenizations["labels"], tokenizations["response_mask"]
+        
+        advantages_train, raw_rewards_train, metadata = compute_group_normalized_reward(r1_zero_reward_fn, 
+                                                                                        rollout_responses=responses, 
+                                                                                        repeated_ground_truths=repeated_answers,
+                                                                                        group_size=group_size,
+                                                                                        advantage_eps=advantage_eps, 
+                                                                                        normalized_by_std=use_std_normalization,
+                                                                                        )
+        
+
 
 
 
