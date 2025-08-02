@@ -1,5 +1,5 @@
 import torch
-
+from einops import repeat
 def compute_group_normalized_reward(
     reward_fn,
     rollout_responses,
@@ -20,8 +20,8 @@ def compute_group_normalized_reward(
 
     if normalized_by_std:
         std_reward_per_group = torch.std(rewards_per_group, dim=-1, keepdim=True)
-        advantage /= (std_reward_per_group + advantage_eps)   # prompts * group_size
-    advantage = advantage.flatten()
+        advantage /= (std_reward_per_group + advantage_eps)   # prompts
+    advantage = advantage.flatten()   # prompts * group_size, 1
 
     metadata = {
         'mean': torch.mean(raw_rewards),
@@ -32,3 +32,29 @@ def compute_group_normalized_reward(
 
     return advantage, raw_rewards, metadata
 
+def compute_naive_policy_gradient_loss(
+    raw_rewards_or_advantages: torch.Tensor,    # batch_size, 1
+    policy_log_probs: torch.Tensor       # batch_size * seq_len
+) -> torch.Tensor: 
+    batch_size, seq_len = policy_log_probs.shape
+    raw_rewards_or_advantages = repeat(raw_rewards_or_advantages, 'b 1->b s', s=seq_len)
+    loss = -raw_rewards_or_advantages * policy_log_probs
+
+    return loss
+
+def compute_grpo_clip_loss(
+    advantages: torch.Tensor,
+    policy_log_probs: torch.Tensor,
+    old_log_probs: torch.Tensor,
+    cliprange: float
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    pi_ratio = torch.exp(policy_log_probs - old_log_probs)
+    batch_size, seq_len = policy_log_probs.shape
+    advantages = repeat(advantages, "b 1 -> b s", s=seq_len)
+    v = pi_ratio * advantages
+    v_clip = torch.clip(pi_ratio, min=1-cliprange, max=1+cliprange) * advantages
+
+    meta = {
+        "cliped": v > v_clip
+    }
+    return -torch.min(v, v_clip), meta
