@@ -8,6 +8,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase
 from cs336_alignment.utils import *
+from cs336_alignment.grpo import *
 # tokenize_prompt_and_output, compute_entropy, masked_normalize, sft_microbatch_train_step
 
 
@@ -45,6 +46,7 @@ def run_compute_group_normalized_rewards(
     advantage_eps: float,
     normalize_by_std: bool,
 ) -> tuple[torch.Tensor, dict[str, float]]:
+
     """
     Compute rewards for each group of rollout responses, 
     normalized by the group size.
@@ -80,6 +82,7 @@ def run_compute_group_normalized_rewards(
                 You may choose what you wish to log here
                 (some statistics of the rewards, etc.).
     """
+    return compute_group_normalized_reward(reward_fn, rollout_responses, repeated_ground_truths, group_size, advantage_eps, normalize_by_std)
     raise NotImplementedError
 
 
