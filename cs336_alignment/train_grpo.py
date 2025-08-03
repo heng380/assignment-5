@@ -30,6 +30,9 @@ gradient_accumulation_steps = 128 # microbatch=2
 gpu_memory_utilization = 0.85
 loss_type = "reinforce_with_baseline"
 use_std_normalization = True
+cliprange = 0.2
+grpo_eval_freq = 8
+grpo_num_eval_samples = 1024
 
 QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/model/Qwen2.5-Math-1.5B"
 PROMPT_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/prompts/r1_zero.prompt"
@@ -59,6 +62,7 @@ def train_grpo():
             "n_grpo_steps": n_grpo_steps
             }
     )
+    wandb_step = 0
 
     model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=QWEN_MATH_BASE_PATH,
@@ -107,10 +111,86 @@ def train_grpo():
                                                                                         advantage_eps=advantage_eps, 
                                                                                         normalized_by_std=use_std_normalization,
                                                                                         )
+        print ("---------examples of prompt, response, answer-----------")
+        for i in range(3):
+            print (f"prompt:{prompts[i]}")
+            print (f"rollouts:{responses[i]}")
+            print (f"answers:{repeated_answers[i]}")
+            print (f"reward:{raw_rewards_train[i]}")
+            print ()
+        print ("--------grpo step rollout example done")
+
+        num_train_steps_per_epoch = rollout_batch_size // train_batch_size #rollout total num
+
+        # get per token log probs on old model
+        with torch.no_grad():
+            old_log_probs_train = []
+            for train_step in range(num_train_steps_per_epoch):
+                batch_idxs = train_step*train_batch_size, (train_step+1)*train_batch_size
+                for train_microstep in range(gradient_accumulation_steps):
+                    microbatch_idxs = batch_idxs[0] + train_microstep*micro_train_batch_size, batch_idxs[0] + (train_microstep+1)*micro_train_batch_size
+                    input_id_micro_batch = input_ids[microbatch_idxs[0]:microbatch_idxs[1]]
+                    labels_micro_batch = labels[microbatch_idxs[0]:microbatch_idxs[1]]
+                    response_mask_micro_batch = response_mask[microbatch_idxs[0]:microbatch_idxs[1]]
+                    log_probs_dict = get_response_log_probs(model=model,
+                                                            input_ids=input_id_micro_batch,
+                                                            labels = labels_micro_batch,
+                                                            return_token_entropy=True)
+                    log_probs = log_probs_dict["log_probs"]
+                    token_entropy = log_probs_dict["token_entropy"]
+                    old_log_probs_train.append(log_probs)
+                    assert log_probs.shape[0] == microbatch_idxs[1] - microbatch_idxs[0]
+            old_log_probs_train = torch.cat(old_log_probs_train)
+        print (f"grpo step {grpo_step}: complete computing log probs on the old model, old_log_probs_train.shape={old_log_probs_train.shape}")
+
+
+        # train new model
+        for train_epoch in range(epochs_per_rollout_batch):
+            for train_step in range(num_train_steps_per_epoch):
+                batch_idxs = train_step*train_batch_size, (train_step+1)*train_batch_size
+                for train_microstep in range(gradient_accumulation_steps):
+                    microbatch_idxs = batch_idxs[0] + train_microstep*micro_train_batch_size, batch_idxs[0] + (train_microstep+1)*micro_train_batch_size
+                    raw_rewards = raw_rewards_train[microbatch_idxs[0]:microbatch_idxs[1]].unsqueeze(-1)
+                    advantages = advantages_train[microbatch_idxs[0]:microbatch_idxs[1]].unsqueeze(-1)
+                    old_log_probs = old_log_probs_train[microbatch_idxs[0]:microbatch_idxs[1]]
+                    input_id_micro_batch = input_ids[microbatch_idxs[0]:microbatch_idxs[1]]
+                    labels_micro_batch = labels[microbatch_idxs[0]:microbatch_idxs[1]]
+                    response_mask_micro_batch = response_mask[microbatch_idxs[0]:microbatch_idxs[1]]
+
+                    log_probs_dict = get_response_log_probs(model, input_ids, labels, return_token_entropy=True)
+                    log_probs = log_probs_dict["log_probs"]
+                    token_entropy = log_probs_dict["token_entropy"]
+
+                    policy_log_probs = log_probs
+                    loss, metadata = grpo_microbatch_train_step(policy_log_probs, response_mask_micro_batch, gradient_accumulation_steps, loss_type, raw_rewards, advantages, old_log_probs, cliprange)
+                    print (f"train: grpo step {grpo_step}, train epoch {train_epoch}, train step {train_step}, micro batch step {train_microstep}, loss is {loss:.6f}")
+
+                    avg_token_entropy = masked_mean(token_entropy, response_mask, dim=None)
+                    wandb.log({"train/train_loss": loss, "train/train_entropy": avg_token_entropy}, step=wandb_step)
+                    if loss_type == "grpo_clip":
+                        clipped_fraction = masked_mean(metadata["clipped"], response_mask, dim=None)
+                        wandb.log({"train/clip_fraction": clipped_fraction}, step=wandb_step)
+                    wandb_step += 1
+                gradient_clipping(model)
+                optimizer.step()
+                optimizer.zero_grad()
+
+        load_policy_into_vllm_instance(model, vllm)
+        if grpo_step % grpo_eval_freq == 0:
+            format_acc, answer_acc = model_eval(vllm, grpo_num_eval_samples)
+
+
+
+
+
+
         
 
 
-
+def load_policy_into_vllm_instance(policy: torch.nn.Module, llm:LLM):
+    state_dict = policy.state_dict()
+    llm_model = llm.llm_engine.model_executor.driver_worker.model_runner.model
+    llm_model.load_weights(state_dict.items())
 
 def load_jsonl(file_path:str)->list[str]:
     data = []

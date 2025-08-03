@@ -51,11 +51,11 @@ def get_response_log_probs(
 ) -> dict[str, torch.Tensor]:
     """
     input: model, input_ids, labels
-    output: log_softmax(b s v) and entropy(b s)
+    output: log_softmax(b s) and entropy(b s)
     """
     logits = model(input_ids).logits   # b s v
     log_softmax = torch.nn.functional.log_softmax(logits)  # b s v
-    label_token_log_softmax = log_softmax.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+    label_token_log_softmax = log_softmax.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1) # b s
 
     if return_token_entropy:
         entropy = compute_entropy(logits)

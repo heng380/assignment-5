@@ -105,4 +105,13 @@ def grpo_microbatch_train_step(
     loss.backward()
     return loss, metadata
 
-
+def gradient_clipping(model):
+    params_gradients = []
+    for param in model.parameters():
+        if param.grad is not None:
+            params_gradients.append(param.grad.data.flatten())
+    grads = torch.cat(params_gradients)
+    if torch.norm(grads) > 1.0:
+        norm = torch.norm(grads)
+        for param in model.parameters():
+            param.grad.data /= norm
