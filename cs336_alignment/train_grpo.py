@@ -2,7 +2,6 @@ import torch
 from grpo import *
 from argparse import ArgumentParser
 import wandb 
-from vllm.model_executor import set_random_seed as vllm_set_random_seed
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from unittest.mock import patch
 from vllm import LLM, SamplingParams
@@ -34,18 +33,24 @@ cliprange = 0.2
 grpo_eval_freq = 8
 grpo_num_eval_samples = 1024
 
-QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/model/Qwen2.5-Math-1.5B"
-PROMPT_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/prompts/r1_zero.prompt"
-TEST_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/test.jsonl"
-OUTPUT_PATH = "/home/aiscuser/repos/assignment5-alignment/data/grpo"
-MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/train.jsonl"
+QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5/data/model/Qwen2.5-Math-1.5B"
+PROMPT_PATH = "/home/aiscuser/repos/assignment5/cs336_alignment/prompts/r1_zero.prompt"
+TEST_DATA_PATH = "/home/aiscuser/repos/assignment5/data/gsm8k/test.jsonl"
+OUTPUT_PATH = "/home/aiscuser/repos/assignment5/data/grpo"
+MATH_DATA_PATH = "/home/aiscuser/repos/assignment5/data/gsm8k/train.jsonl"
 SEED = 69
 torch.manual_seed(SEED)
 random.seed(SEED)
 device_train = "cuda:3"
 device_vllm = "cuda:1"
 
+ANS_RE = re.compile(r"####\s*([\-0-9\.\,]+)")
 
+def extract_reference_answer(answer: str) -> str:
+    match = ANS_RE.search(answer)
+    if match:
+        return match.group(1).strip().replace(",", "")
+    return "[invalid]"
 
 def train_grpo():
     assert train_batch_size % gradient_accumulation_steps == 0, "train_batch_size must be divisible by gradient_accumulation_steps"
@@ -55,13 +60,13 @@ def train_grpo():
     assert train_batch_size >= group_size, "train_batch_size must be greater than or equal to group_size"
     n_microbatches_per_rollout_batch = rollout_batch_size // micro_train_batch_size
 
-    wandb.init(
-        project="cs336-grpo",
-        name=f"reinforce_with_baseline",
-        config={
-            "n_grpo_steps": n_grpo_steps
-            }
-    )
+    # wandb.init(
+    #     project="cs336-grpo",
+    #     name=f"reinforce_with_baseline",
+    #     config={
+    #         "n_grpo_steps": n_grpo_steps
+    #         }
+    # )
     wandb_step = 0
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -96,6 +101,7 @@ def train_grpo():
         responses = []
         prompts = []
         for output, answer in zip(outputs, rollout_answers):
+            answer = extract_reference_answer(answer)
             prompt = output.prompt
             for rollout in output.outputs:
                 responses.append(rollout.text)
@@ -166,24 +172,58 @@ def train_grpo():
                     print (f"train: grpo step {grpo_step}, train epoch {train_epoch}, train step {train_step}, micro batch step {train_microstep}, loss is {loss:.6f}")
 
                     avg_token_entropy = masked_mean(token_entropy, response_mask, dim=None)
-                    wandb.log({"train/train_loss": loss, "train/train_entropy": avg_token_entropy}, step=wandb_step)
+                    wandb.log({
+                        "train/train_loss": loss, 
+                        "train/train_entropy": avg_token_entropy, 
+                        "train_step": wandb_step
+                    })
                     if loss_type == "grpo_clip":
                         clipped_fraction = masked_mean(metadata["clipped"], response_mask, dim=None)
                         wandb.log({"train/clip_fraction": clipped_fraction}, step=wandb_step)
-                    wandb_step += 1
-                gradient_clipping(model)
+                wandb_step += 1
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
                 optimizer.step()
                 optimizer.zero_grad()
 
         load_policy_into_vllm_instance(model, vllm)
         if grpo_step % grpo_eval_freq == 0:
-            format_acc, answer_acc = model_eval(vllm, grpo_num_eval_samples)
+            prompts = [data["prompt"] for data in test_data]
+            answers = [data["answer"] for data in test_data]
+            sampling_params = SamplingParams(temperature=1.0, top_p=1.0, max_tokens=1024, stop=["</answer>"], include_stop_str_in_output=True)
+            overview = evaluate_vllm(vllm, r1_zero_reward_fn, prompts, answers, sampling_params)
 
+            wandb.log({
+                "eval/correct": overview["correct"],
+                "eval/correct format with wrong answer": overview["answer_wrong"],
+                "eval/wrong format": overview["format_wrong"],
+                "eval/accuracy": overview["correct"] / overview["count"],
+                "eval_step": wandb_step+1
+            })
 
-
-
-
-
+def evaluate_vllm(
+    vllm_model: LLM,
+    reward_fn: Callable[[str, str], dict[str, float]],
+    prompts: List[str],
+    answers: List[str],
+    eval_sampling_params: SamplingParams
+):
+    responses = run_vllm(vllm_model, prompts, eval_sampling_params)
+    allinfo_dict_list = []
+    for response, answer, prompt in zip(responses, answers, prompts):
+        extracted_answer = extract_reference_answer(answer)
+        reward_dict = reward_fn(response, extracted_answer)
+        allinfo_dict_list.append(reward_dict)
+    overview = {"correct":0, "format_wrong":0, "answer_wrong":0, "count":0}
+    for reward in allinfo_dict_list:
+        overview["count"] += 1
+        if reward["reward"] == 1:
+            overview["correct"] += 1
+        elif reward["format_reward"] == 1:
+            overview["answer_wrong"] += 1
+        else:
+            overview["format_wrong"] += 1
+    return overview
+    
         
 
 
@@ -226,7 +266,6 @@ def prepare_train_test():
 
 
 def init_vllm(model_id: str, device: str, seed: int, gpu_memory_utilization: float=0.85):
-    vllm_set_random_seed(seed)
 
     world_size_patch = patch("torch.distributed.get_world_size", return_value=1)
     profiling_patch = patch("vllm.worker.worker.Worker._assert_memory_footprint_increased_during_profiling", return_value=None)
