@@ -33,15 +33,15 @@ cliprange = 0.2
 grpo_eval_freq = 8
 grpo_num_eval_samples = 1024
 
-QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5/data/model/Qwen2.5-Math-1.5B"
-PROMPT_PATH = "/home/aiscuser/repos/assignment5/cs336_alignment/prompts/r1_zero.prompt"
-TEST_DATA_PATH = "/home/aiscuser/repos/assignment5/data/gsm8k/test.jsonl"
-OUTPUT_PATH = "/home/aiscuser/repos/assignment5/data/grpo"
-MATH_DATA_PATH = "/home/aiscuser/repos/assignment5/data/gsm8k/train.jsonl"
+QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment-5/data/model/Qwen2.5-Math-1.5B"
+PROMPT_PATH = "/home/aiscuser/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
+TEST_DATA_PATH = "/home/aiscuser/repos/assignment-5/data/gsm8k/test.jsonl"
+OUTPUT_PATH = "/home/aiscuser/repos/assignment-5/data/grpo"
+MATH_DATA_PATH = "/home/aiscuser/repos/assignment-5/data/gsm8k/train.jsonl"
 SEED = 69
 torch.manual_seed(SEED)
 random.seed(SEED)
-device_train = "cuda:3"
+device_train = "cuda:0"
 device_vllm = "cuda:1"
 
 ANS_RE = re.compile(r"####\s*([\-0-9\.\,]+)")
@@ -60,13 +60,12 @@ def train_grpo():
     assert train_batch_size >= group_size, "train_batch_size must be greater than or equal to group_size"
     n_microbatches_per_rollout_batch = rollout_batch_size // micro_train_batch_size
 
-    # wandb.init(
-    #     project="cs336-grpo",
-    #     name=f"reinforce_with_baseline",
-    #     config={
-    #         "n_grpo_steps": n_grpo_steps
-    #         }
-    # )
+    wandb.init(
+
+        config={
+            "n_grpo_steps": n_grpo_steps
+            }
+    )
     wandb_step = 0
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -80,7 +79,7 @@ def train_grpo():
     
     vllm = init_vllm(QWEN_MATH_BASE_PATH, device_vllm, SEED, gpu_memory_utilization=0.9)
 
-    optimizer = torch.optim.AdamW(model.parameter(), lr=learning_rate, weight_decay=0, betas=(0.9, 0.95))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0, betas=(0.9, 0.95))
 
     train_data, test_data = prepare_train_test()  # [{prompt, answer}]
 
@@ -108,8 +107,9 @@ def train_grpo():
                 prompts.append(prompt)
                 repeated_answers.append(answer)
         tokenizations = tokenize_prompt_and_output(prompts, responses, tokenizer)
-        input_ids, labels, response_mask = tokenizations["input_ids"], tokenizations["labels"], tokenizations["response_mask"]
+        input_ids, labels, response_mask = tokenizations["input_ids"].to(device_train), tokenizations["labels"].to(device_train), tokenizations["response_mask"].to(device_train)
         
+        print (f"response_mask.shape: {response_mask.shape}")
         advantages_train, raw_rewards_train, metadata = compute_group_normalized_reward(r1_zero_reward_fn, 
                                                                                         rollout_responses=responses, 
                                                                                         repeated_ground_truths=repeated_answers,
@@ -117,6 +117,8 @@ def train_grpo():
                                                                                         advantage_eps=advantage_eps, 
                                                                                         normalized_by_std=use_std_normalization,
                                                                                         )
+        advantages_train = advantages_train.to(device_train)
+        raw_rewards_train = raw_rewards_train.to(device_train)
         print ("---------examples of prompt, response, answer-----------")
         for i in range(3):
             print (f"prompt:{prompts[i]}")
@@ -124,6 +126,7 @@ def train_grpo():
             print (f"answers:{repeated_answers[i]}")
             print (f"reward:{raw_rewards_train[i]}")
             print ()
+            print (f"metadata: {metadata}")
         print ("--------grpo step rollout example done")
 
         num_train_steps_per_epoch = rollout_batch_size // train_batch_size #rollout total num
@@ -163,15 +166,19 @@ def train_grpo():
                     labels_micro_batch = labels[microbatch_idxs[0]:microbatch_idxs[1]]
                     response_mask_micro_batch = response_mask[microbatch_idxs[0]:microbatch_idxs[1]]
 
-                    log_probs_dict = get_response_log_probs(model, input_ids, labels, return_token_entropy=True)
+                    log_probs_dict = get_response_log_probs(model, 
+                                                            input_ids=input_id_micro_batch, 
+                                                            labels=labels_micro_batch, 
+                                                            return_token_entropy=True)
                     log_probs = log_probs_dict["log_probs"]
                     token_entropy = log_probs_dict["token_entropy"]
 
                     policy_log_probs = log_probs
-                    loss, metadata = grpo_microbatch_train_step(policy_log_probs, response_mask_micro_batch, gradient_accumulation_steps, loss_type, raw_rewards, advantages, old_log_probs, cliprange)
+                    policy_log_probs.to(device_train)
+                    loss, metadata = grpo_microbatc
                     print (f"train: grpo step {grpo_step}, train epoch {train_epoch}, train step {train_step}, micro batch step {train_microstep}, loss is {loss:.6f}")
 
-                    avg_token_entropy = masked_mean(token_entropy, response_mask, dim=None)
+                    avg_token_entropy = masked_mean(token_entropy, response_mask_micro_batch, dim=None)
                     wandb.log({
                         "train/train_loss": loss, 
                         "train/train_entropy": avg_token_entropy, 
@@ -180,7 +187,7 @@ def train_grpo():
                     if loss_type == "grpo_clip":
                         clipped_fraction = masked_mean(metadata["clipped"], response_mask, dim=None)
                         wandb.log({"train/clip_fraction": clipped_fraction}, step=wandb_step)
-                wandb_step += 1
+                    wandb_step += 1
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
                 optimizer.step()
                 optimizer.zero_grad()
