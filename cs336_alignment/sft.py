@@ -13,15 +13,15 @@ from typing import Callable, List, Tuple
 import re
 from baseline import run_vllm
 
-QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/model/Qwen2.5-Math-1.5B"
-PROMPT_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/prompts/r1_zero.prompt"
-TEST_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/test.jsonl"
-OUTPUT_PATH = "/home/aiscuser/repos/assignment5-alignment/data/sft"
-MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/baseline_result.jsonl"
+QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment-5/data/model/Qwen2.5-Math-1.5B"
+PROMPT_PATH = "/home/aiscuser/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
+TEST_DATA_PATH = "/home/aiscuser/repos/assignment-5/data/gsm8k/test.jsonl"
+OUTPUT_PATH = "/home/aiscuser/repos/assignment-5/data/sft"
+MATH_DATA_PATH = "/home/aiscuser/repos/assignment-5/cs336_alignment/baseline_result.jsonl"
 SEED = 69
 torch.manual_seed(SEED)
 random.seed(SEED)
-device_train = "cuda:3"
+device_train = "cuda:0"
 device_vllm = "cuda:1"
 micro_batch_size=8
 n_sft_steps = 256
@@ -147,7 +147,7 @@ def main(train_samples:list[int], dataset_type:str, MATH_DATA_PATH:str) -> None:
         )
         tokenizer = AutoTokenizer.from_pretrained(QWEN_MATH_BASE_PATH)
 
-        optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=5e-6)
         
         amp_ctx = torch.amp.autocast(device_type=device_train, dtype=torch.bfloat16)
 
@@ -210,10 +210,10 @@ def main(train_samples:list[int], dataset_type:str, MATH_DATA_PATH:str) -> None:
                 )
                 accuracy = overview["correct"] / overview["count"]
                 print (f"evaluation at step {i_sft_step+1}")
-                print (f"Correct answer:{overview["correct"]}")
+                print (f"Correct answer:{overview['correct']}")
                 print (f"Accuracy: {accuracy:.4f}")
-                print (f"Wrong answer with correct format:{overview["answer_wrong"]}")
-                print (f"Wrong format:{overview["format_wrong"]}")
+                print (f"Wrong answer with correct format:{overview['answer_wrong']}")
+                print (f"Wrong format:{overview['format_wrong']}")
 
                 wandb.log({
                     "eval/correct": overview["correct"],

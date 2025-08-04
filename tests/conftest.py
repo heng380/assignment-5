@@ -210,7 +210,7 @@ def output_strs():
 
 @pytest.fixture
 def model_id():
-    return "/home/aiscuser/repos/assignment5-alignment/data/model/Qwen2.5-Math-1.5B"
+    return "/home/aiscuser/repos/assignment-5/data/model/Qwen2.5-Math-1.5B"
 
 
 @pytest.fixture

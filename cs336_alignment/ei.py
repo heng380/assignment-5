@@ -15,8 +15,7 @@ from baseline import run_vllm
 from transformers import PreTrainedTokenizerBase
 import torch.nn as nn
 
-# QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/model/Qwen2.5-Math-1.5B"
-QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/sft"
+QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/model/Qwen2.5-Math-1.5B"
 PROMPT_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/prompts/r1_zero.prompt"
 TEST_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/test.jsonl"
 OUTPUT_PATH = "/home/aiscuser/repos/assignment5-alignment/data/ei"
@@ -144,7 +143,7 @@ def ei_sft(sft_data: list[dict[str, str]], model:torch.nn.Module, tokenizer:PreT
     tokenized_train_data = tokenize_prompt_and_output(prompt_strs=[data["prompt"] for data in sft_data], 
                                                       output_strs=[data["response"] for data in sft_data],
                                                       tokenizer=tokenizer)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-6)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=8e-5)
     
     amp_ctx = torch.amp.autocast(device_type=device_train, dtype=torch.bfloat16)
     n_sft_steps = len(sft_data) * epoch // (n_grad_accum_steps * micro_batch_size) + 1
@@ -207,7 +206,7 @@ def ei_sft(sft_data: list[dict[str, str]], model:torch.nn.Module, tokenizer:PreT
 def main(n_ei_steps:int, batch_size:int, epochs:int, ei_num_g:int) -> None:
     global_step = 0
     wandb.init(project="cs336-ei-sft",
-        name=f"step_{n_ei_steps}_batch_size_{batch_size}_epochs_{epochs}_math_ei_sft_after_sft",
+        name=f"step_{n_ei_steps}_batch_size_{batch_size}_epochs_{epochs}_math_ei_sft",
         config={
             "n_ei_steps": n_ei_steps,
             "batch_size": batch_size,
@@ -285,7 +284,7 @@ if __name__ == "__main__":
     # test_parser.add_argument("--test_type")
 
     # train_parser = subparsers.add_parser("train")
-    parser.add_argument("--n_ei_steps", type=int, default=5)
+    parser.add_argument("--n_ei_steps", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=1024)
     parser.add_argument("--epochs", type=int, default=4)
     parser.add_argument("--ei_num_g", type=int, default=5)

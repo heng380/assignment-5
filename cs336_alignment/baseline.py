@@ -7,9 +7,9 @@ import os
 from collections import Counter
 import argparse
 #%%
-QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/model/Qwen2.5-Math-1.5B"
-PROMPT_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/prompts/r1_zero.prompt"
-MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k"
+QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment-5/data/model/Qwen2.5-Math-1.5B"
+PROMPT_PATH = "/home/aiscuser/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
+MATH_DATA_PATH = "/home/aiscuser/repos/assignment-5/data/gsm8k"
 
 ANS_RE = re.compile(r"####\s*([\-0-9\.\,]+)")
 

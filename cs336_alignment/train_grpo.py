@@ -27,7 +27,7 @@ epochs_per_rollout_batch = 1   # on policy
 train_batch_size = 256
 gradient_accumulation_steps = 128 # microbatch=2
 gpu_memory_utilization = 0.85
-loss_type = "reinforce_with_baseline"
+loss_type = "grpo_clip"
 use_std_normalization = True
 cliprange = 0.2
 grpo_eval_freq = 8
@@ -175,7 +175,7 @@ def train_grpo():
 
                     policy_log_probs = log_probs
                     policy_log_probs.to(device_train)
-                    loss, metadata = grpo_microbatc
+                    loss, metadata = grpo_microbatch_train_step(policy_log_probs, response_mask_micro_batch, gradient_accumulation_steps, loss_type, raw_rewards, advantages, old_log_probs, cliprange)
                     print (f"train: grpo step {grpo_step}, train epoch {train_epoch}, train step {train_step}, micro batch step {train_microstep}, loss is {loss:.6f}")
 
                     avg_token_entropy = masked_mean(token_entropy, response_mask_micro_batch, dim=None)
@@ -185,7 +185,7 @@ def train_grpo():
                         "train_step": wandb_step
                     })
                     if loss_type == "grpo_clip":
-                        clipped_fraction = masked_mean(metadata["clipped"], response_mask, dim=None)
+                        clipped_fraction = masked_mean(metadata["cliped"], response_mask_micro_batch, dim=None)
                         wandb.log({"train/clip_fraction": clipped_fraction}, step=wandb_step)
                     wandb_step += 1
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
