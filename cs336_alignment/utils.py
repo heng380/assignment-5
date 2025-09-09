@@ -94,7 +94,7 @@ def sft_microbatch_train_step(
     masked_normalized_probs = masked_normalize(
         policy_log_probs, response_mask, -1, normalize_constant
     )
-    loss = -masked_normalized_probs.mean()
+    loss = -masked_normalized_probs.mean()   # 除以句子数量
     loss = loss / gradient_accumulation_steps
     loss.backward()
 

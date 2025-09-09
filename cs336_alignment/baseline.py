@@ -7,9 +7,10 @@ import os
 from collections import Counter
 import argparse
 #%%
-QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment-5/data/model/Qwen2.5-Math-1.5B"
-PROMPT_PATH = "/home/aiscuser/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
-MATH_DATA_PATH = "/home/aiscuser/repos/assignment-5/data/gsm8k"
+# QWEN_MATH_BASE_PATH = "/home/ubuntu/model/Qwen2.5-Math-1.5B"
+QWEN_MATH_BASE_PATH = "/home/ubuntu/repos/assignment-5/data/sft2_correct"
+PROMPT_PATH = "/home/ubuntu/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
+MATH_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k"
 
 ANS_RE = re.compile(r"####\s*([\-0-9\.\,]+)")
 
@@ -100,7 +101,7 @@ if __name__ == "__main__":
             print (f"prompt:{i}, \n answer:{j}")
             break
     else:
-        prompts, answers = load_and_format_prompts(data_path=MATH_DATA_PATH+"/train.jsonl", prompt_path=PROMPT_PATH)
+        prompts, answers = load_and_format_prompts(data_path=MATH_DATA_PATH+"/test.jsonl", prompt_path=PROMPT_PATH)
         llm, sampling_params = build_llm_and_params(QWEN_MATH_BASE_PATH)
         allinfo_dict_list = evaluate_vllm(llm, r1_zero_reward_fn, prompts, answers, sampling_params)
         with open("baseline_result.jsonl", "w") as f:

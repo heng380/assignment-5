@@ -13,16 +13,16 @@ from typing import Callable, List, Tuple
 import re
 from baseline import run_vllm
 
-QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment-5/data/model/Qwen2.5-Math-1.5B"
-PROMPT_PATH = "/home/aiscuser/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
-TEST_DATA_PATH = "/home/aiscuser/repos/assignment-5/data/gsm8k/test.jsonl"
-OUTPUT_PATH = "/home/aiscuser/repos/assignment-5/data/sft"
+QWEN_MATH_BASE_PATH = "/home/ubuntu/model/Qwen2.5-Math-1.5B"
+PROMPT_PATH = "/home/ubuntu/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
+TEST_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/test.jsonl"
+OUTPUT_PATH = "/home/ubuntu/repos/assignment-5/data/sft2_correct"
 MATH_DATA_PATH = "/home/aiscuser/repos/assignment-5/cs336_alignment/baseline_result.jsonl"
 SEED = 69
 torch.manual_seed(SEED)
 random.seed(SEED)
-device_train = "cuda:0"
-device_vllm = "cuda:1"
+device_train = "cuda:2"
+device_vllm = "cuda:3"
 micro_batch_size=8
 n_sft_steps = 256
 n_grad_accum_steps = 8
@@ -127,7 +127,7 @@ def to_float(val):
 def main(train_samples:list[int], dataset_type:str, MATH_DATA_PATH:str) -> None:
     for train_sample in train_samples:
         print (f"train candidate: {train_sample}")
-        wandb.init(project="cs336-sft",
+        wandb.init(project="cs336-sft-2",
             name=f"train_sample_{train_sample}_dataset_{dataset_type}_math_sft",
             config={
                 "train_sample": train_sample,
@@ -147,7 +147,7 @@ def main(train_samples:list[int], dataset_type:str, MATH_DATA_PATH:str) -> None:
         )
         tokenizer = AutoTokenizer.from_pretrained(QWEN_MATH_BASE_PATH)
 
-        optimizer = torch.optim.AdamW(model.parameters(), lr=5e-6)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
         
         amp_ctx = torch.amp.autocast(device_type=device_train, dtype=torch.bfloat16)
 
@@ -248,12 +248,12 @@ if __name__ == "__main__":
     # for true run
     if args.command == "train":
         if args.use_correct == False:
-            MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/processed_train.jsonl"
-            train_samples = [128]
+            MATH_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/processed_train.jsonl"
+            train_samples = [7473]
             dataset_type = "raw"
         else:
-            MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/correct.jsonl"
-            train_samples = [215]
+            MATH_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/correct.jsonl"
+            train_samples = [245]
             dataset_type = "correct"
     
         main(train_samples, dataset_type, MATH_DATA_PATH)

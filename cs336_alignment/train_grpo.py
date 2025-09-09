@@ -16,7 +16,7 @@ from transformers import PreTrainedTokenizerBase
 import torch.nn as nn
 
 n_grpo_steps = 200
-learning_rate = 1e-5
+learning_rate = 4e-5
 advantage_eps = 1e-6
 rollout_batch_size = 256
 group_size = 8
@@ -25,24 +25,26 @@ sampling_min_tokens = 4
 sampling_max_tokens = 1024
 epochs_per_rollout_batch = 1   # on policy
 train_batch_size = 256
-gradient_accumulation_steps = 128 # microbatch=2
-gpu_memory_utilization = 0.85
+gradient_accumulation_steps = 32 # microbatch=8
+gpu_memory_utilization = 0.95
+# loss_type = "no_baseline"
+# loss_type = "reinforce_with_baseline"
 loss_type = "grpo_clip"
 use_std_normalization = True
 cliprange = 0.2
 grpo_eval_freq = 8
 grpo_num_eval_samples = 1024
 
-QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment-5/data/model/Qwen2.5-Math-1.5B"
-PROMPT_PATH = "/home/aiscuser/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
-TEST_DATA_PATH = "/home/aiscuser/repos/assignment-5/data/gsm8k/test.jsonl"
-OUTPUT_PATH = "/home/aiscuser/repos/assignment-5/data/grpo"
-MATH_DATA_PATH = "/home/aiscuser/repos/assignment-5/data/gsm8k/train.jsonl"
+QWEN_MATH_BASE_PATH = "/home/ubuntu/model/Qwen2.5-Math-1.5B"
+PROMPT_PATH = "/home/ubuntu/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
+TEST_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/test.jsonl"
+OUTPUT_PATH = "/home/ubuntu/repos/assignment-5/data/grpo"
+MATH_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/train.jsonl"
 SEED = 69
 torch.manual_seed(SEED)
 random.seed(SEED)
-device_train = "cuda:0"
-device_vllm = "cuda:1"
+device_train = "cuda:2"
+device_vllm = "cuda:3"
 
 ANS_RE = re.compile(r"####\s*([\-0-9\.\,]+)")
 
@@ -60,8 +62,8 @@ def train_grpo():
     assert train_batch_size >= group_size, "train_batch_size must be greater than or equal to group_size"
     n_microbatches_per_rollout_batch = rollout_batch_size // micro_train_batch_size
 
-    wandb.init(
-
+    wandb.init(project="cs336-grpo",
+        name=f"grpo_lr_4e-5",
         config={
             "n_grpo_steps": n_grpo_steps
             }
@@ -182,12 +184,12 @@ def train_grpo():
                     wandb.log({
                         "train/train_loss": loss, 
                         "train/train_entropy": avg_token_entropy, 
-                        "train_step": wandb_step
+                        "train_step": grpo_step
                     })
                     if loss_type == "grpo_clip":
                         clipped_fraction = masked_mean(metadata["cliped"], response_mask_micro_batch, dim=None)
-                        wandb.log({"train/clip_fraction": clipped_fraction}, step=wandb_step)
-                    wandb_step += 1
+                        wandb.log({"train/clip_fraction": clipped_fraction})
+                # wandb_step += 1
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
                 optimizer.step()
                 optimizer.zero_grad()
@@ -204,7 +206,7 @@ def train_grpo():
                 "eval/correct format with wrong answer": overview["answer_wrong"],
                 "eval/wrong format": overview["format_wrong"],
                 "eval/accuracy": overview["correct"] / overview["count"],
-                "eval_step": wandb_step+1
+                "eval/step": grpo_step
             })
 
 def evaluate_vllm(

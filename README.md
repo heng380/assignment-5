@@ -3,6 +3,13 @@
 ## sft result
 ![alt text](image.png)
 
+## ei result
+![alt text](image-1.png)
+
+## grpo 
+### grepo lr tuning
+
+
 For a full description of the assignment, see the assignment handout at
 [cs336_spring2025_assignment5_alignment.pdf](./cs336_spring2025_assignment5_alignment.pdf)
 

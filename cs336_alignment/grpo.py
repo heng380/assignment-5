@@ -35,7 +35,7 @@ def compute_group_normalized_reward(
 
 def compute_naive_policy_gradient_loss(
     raw_rewards_or_advantages: torch.Tensor,    # batch_size, 1
-    policy_log_probs: torch.Tensor       # batch_size * seq_len
+    policy_log_probs: torch.Tensor       # batch_size,  seq_len
 ) -> torch.Tensor: 
     batch_size, seq_len = policy_log_probs.shape
     raw_rewards_or_advantages = repeat(raw_rewards_or_advantages, 'b 1->b s', s=seq_len)
@@ -86,7 +86,7 @@ def masked_mean(
     dim: int | None = None
 ) -> torch.Tensor:
     masked_tensor = torch.where(mask, tensor, torch.zeros_like(tensor))
-    return torch.sum(masked_tensor, dim=dim) / torch.sum(mask, dim=dim)
+    return torch.sum(masked_tensor, dim=dim) / torch.sum(mask, dim=dim)    # 进行了长度归一化, 为per token的loss
 
 
 def grpo_microbatch_train_step(
@@ -101,7 +101,7 @@ def grpo_microbatch_train_step(
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     loss, metadata = compute_policy_gradient_loss(policy_log_probs, loss_type, raw_rewards, advantages, old_log_probs, cliprange)
     loss = masked_mean(loss, response_mask)
-    loss /= gradient_accumulation_steps
+    loss /= gradient_accumulation_steps  # loss是相加的, 所以需要除以steps
     loss.backward()
     return loss, metadata
 

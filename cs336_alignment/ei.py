@@ -15,16 +15,17 @@ from baseline import run_vllm
 from transformers import PreTrainedTokenizerBase
 import torch.nn as nn
 
-QWEN_MATH_BASE_PATH = "/home/aiscuser/repos/assignment5-alignment/data/model/Qwen2.5-Math-1.5B"
-PROMPT_PATH = "/home/aiscuser/repos/assignment5-alignment/cs336_alignment/prompts/r1_zero.prompt"
-TEST_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/test.jsonl"
-OUTPUT_PATH = "/home/aiscuser/repos/assignment5-alignment/data/ei"
-MATH_DATA_PATH = "/home/aiscuser/repos/assignment5-alignment/data/gsm8k/processed_train.jsonl"
+# QWEN_MATH_BASE_PATH = "/home/ubuntu/repos/assignment-5/data/sft2_correct"
+QWEN_MATH_BASE_PATH = "/home/ubuntu/model/Qwen2.5-Math-1.5B"
+PROMPT_PATH = "/home/ubuntu/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
+TEST_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/test.jsonl"
+OUTPUT_PATH = "/home/ubuntu/repos/assignment-5/data/ei_zero"
+MATH_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/processed_train.jsonl"
 SEED = 69
 torch.manual_seed(SEED)
 random.seed(SEED)
-device_train = "cuda:3"
-device_vllm = "cuda:1"
+device_train = "cuda:1"
+device_vllm = "cuda:3"
 micro_batch_size=8
 n_grad_accum_steps = 8
 eval_steps = 16
@@ -143,7 +144,7 @@ def ei_sft(sft_data: list[dict[str, str]], model:torch.nn.Module, tokenizer:PreT
     tokenized_train_data = tokenize_prompt_and_output(prompt_strs=[data["prompt"] for data in sft_data], 
                                                       output_strs=[data["response"] for data in sft_data],
                                                       tokenizer=tokenizer)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=8e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
     
     amp_ctx = torch.amp.autocast(device_type=device_train, dtype=torch.bfloat16)
     n_sft_steps = len(sft_data) * epoch // (n_grad_accum_steps * micro_batch_size) + 1
@@ -284,10 +285,10 @@ if __name__ == "__main__":
     # test_parser.add_argument("--test_type")
 
     # train_parser = subparsers.add_parser("train")
-    parser.add_argument("--n_ei_steps", type=int, default=10)
-    parser.add_argument("--batch_size", type=int, default=1024)
-    parser.add_argument("--epochs", type=int, default=4)
-    parser.add_argument("--ei_num_g", type=int, default=5)
+    parser.add_argument("--n_ei_steps", type=int, default=3)
+    parser.add_argument("--batch_size", type=int, default=7000)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--ei_num_g", type=int, default=2)
     args = parser.parse_args()
     n_ei_steps = args.n_ei_steps
     batch_size = args.batch_size
