@@ -16,7 +16,7 @@ from transformers import PreTrainedTokenizerBase
 import torch.nn as nn
 
 n_grpo_steps = 200
-learning_rate = 4e-5
+learning_rate = 2e-5
 advantage_eps = 1e-6
 rollout_batch_size = 256
 group_size = 8
@@ -43,8 +43,8 @@ MATH_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/train.jsonl"
 SEED = 69
 torch.manual_seed(SEED)
 random.seed(SEED)
-device_train = "cuda:2"
-device_vllm = "cuda:3"
+device_train = "cuda:0"
+device_vllm = "cuda:1"
 
 ANS_RE = re.compile(r"####\s*([\-0-9\.\,]+)")
 
@@ -63,7 +63,7 @@ def train_grpo():
     n_microbatches_per_rollout_batch = rollout_batch_size // micro_train_batch_size
 
     wandb.init(project="cs336-grpo",
-        name=f"grpo_lr_4e-5",
+        name=f"grpo_lr_2e-5_seq_loss",
         config={
             "n_grpo_steps": n_grpo_steps
             }
@@ -177,7 +177,9 @@ def train_grpo():
 
                     policy_log_probs = log_probs
                     policy_log_probs.to(device_train)
-                    loss, metadata = grpo_microbatch_train_step(policy_log_probs, response_mask_micro_batch, gradient_accumulation_steps, loss_type, raw_rewards, advantages, old_log_probs, cliprange)
+                    # loss, metadata = grpo_microbatch_train_step(policy_log_probs, response_mask_micro_batch, gradient_accumulation_steps, loss_type, raw_rewards, advantages, old_log_probs, cliprange)
+                    loss, metadata = grpo_microbatch_train_step_seq_level_loss(policy_log_probs, response_mask_micro_batch, gradient_accumulation_steps, loss_type, raw_rewards, advantages, old_log_probs, cliprange)
+
                     print (f"train: grpo step {grpo_step}, train epoch {train_epoch}, train step {train_step}, micro batch step {train_microstep}, loss is {loss:.6f}")
 
                     avg_token_entropy = masked_mean(token_entropy, response_mask_micro_batch, dim=None)

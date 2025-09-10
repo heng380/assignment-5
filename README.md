@@ -7,8 +7,11 @@
 ![alt text](image-1.png)
 
 ## grpo 
-### grepo lr tuning
+### grpo lr tuning
+![alt text](image-2.png)
 
+### grpo vs reinforce_baseline vs reinforce
+![alt text](image-3.png)
 
 For a full description of the assignment, see the assignment handout at
 [cs336_spring2025_assignment5_alignment.pdf](./cs336_spring2025_assignment5_alignment.pdf)

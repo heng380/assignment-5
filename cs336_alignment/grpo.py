@@ -1,6 +1,7 @@
 import torch
 from einops import repeat
 from typing import Literal
+from utils import masked_normalize
 def compute_group_normalized_reward(
     reward_fn,
     rollout_responses,
@@ -101,6 +102,22 @@ def grpo_microbatch_train_step(
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     loss, metadata = compute_policy_gradient_loss(policy_log_probs, loss_type, raw_rewards, advantages, old_log_probs, cliprange)
     loss = masked_mean(loss, response_mask)
+    loss /= gradient_accumulation_steps  # loss是相加的, 所以需要除以steps
+    loss.backward()
+    return loss, metadata
+
+def grpo_microbatch_train_step_seq_level_loss(
+        policy_log_probs: torch.Tensor,
+        response_mask: torch.Tensor,
+        gradient_accumulation_steps: int,
+        loss_type: Literal["no_baseline", "reinforce_with_baseline", "grpo_clip"],
+        raw_rewards: torch.Tensor | None=None,
+        advantages: torch.Tensor | None=None,
+        old_log_probs: torch.Tensor | None=None,
+        cliprange: float | None=None
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    loss, metadata = compute_policy_gradient_loss(policy_log_probs, loss_type, raw_rewards, advantages, old_log_probs, cliprange)
+    loss = masked_normalize(loss, response_mask)
     loss /= gradient_accumulation_steps  # loss是相加的, 所以需要除以steps
     loss.backward()
     return loss, metadata
