@@ -16,7 +16,7 @@ from transformers import PreTrainedTokenizerBase
 import torch.nn as nn
 
 n_grpo_steps = 200
-learning_rate = 2e-5
+learning_rate = 3e-5
 advantage_eps = 1e-6
 rollout_batch_size = 256
 group_size = 8
@@ -62,8 +62,8 @@ def train_grpo():
     assert train_batch_size >= group_size, "train_batch_size must be greater than or equal to group_size"
     n_microbatches_per_rollout_batch = rollout_batch_size // micro_train_batch_size
 
-    wandb.init(project="cs336-grpo",
-        name=f"grpo_lr_2e-5_seq_loss",
+    wandb.init(project="cs336-grpo_seq_loss",
+        name=f"grpo_lr_3e-5_seq_loss",
         config={
             "n_grpo_steps": n_grpo_steps
             }
@@ -159,6 +159,11 @@ def train_grpo():
         for train_epoch in range(epochs_per_rollout_batch):
             for train_step in range(num_train_steps_per_epoch):
                 batch_idxs = train_step*train_batch_size, (train_step+1)*train_batch_size
+                accumulated_token_entropy = 0
+                accumulated_clip_fraction = 0
+
+                batch_response_masks = response_mask[batch_idxs[0], batch_idxs[1]]
+                batch_mean_response_length = batch_response_masks.sum(dim=-1).mean(dtype=torch.float32)
                 for train_microstep in range(gradient_accumulation_steps):
                     microbatch_idxs = batch_idxs[0] + train_microstep*micro_train_batch_size, batch_idxs[0] + (train_microstep+1)*micro_train_batch_size
                     raw_rewards = raw_rewards_train[microbatch_idxs[0]:microbatch_idxs[1]].unsqueeze(-1)
@@ -183,18 +188,28 @@ def train_grpo():
                     print (f"train: grpo step {grpo_step}, train epoch {train_epoch}, train step {train_step}, micro batch step {train_microstep}, loss is {loss:.6f}")
 
                     avg_token_entropy = masked_mean(token_entropy, response_mask_micro_batch, dim=None)
-                    wandb.log({
-                        "train/train_loss": loss, 
-                        "train/train_entropy": avg_token_entropy, 
-                        "train_step": grpo_step
-                    })
-                    if loss_type == "grpo_clip":
-                        clipped_fraction = masked_mean(metadata["cliped"], response_mask_micro_batch, dim=None)
-                        wandb.log({"train/clip_fraction": clipped_fraction})
+                    accumulated_token_entropy += avg_token_entropy
+                    accumulated_clip_fraction += masked_mean(metadata["cliped"], response_mask_micro_batch, dim=None)
+                    # wandb.log({
+                    #     "train/train_loss": loss, 
+                    #     "train/train_entropy": avg_token_entropy, 
+                    #     "train_step": grpo_step
+                    # })
+                    # if loss_type == "grpo_clip":
+                    #     clipped_fraction = masked_mean(metadata["cliped"], response_mask_micro_batch, dim=None)
+                    #     wandb.log({"train/clip_fraction": clipped_fraction})
                 # wandb_step += 1
-                nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+                grad_norm = nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
                 optimizer.step()
                 optimizer.zero_grad()
+
+                wandb.log({
+                    "train/loss": loss * gradient_accumulation_steps,
+                    "train/avg_token_entropy": accumulated_token_entropy / gradient_accumulation_steps,
+                    "train/avg_clip_fraction": accumulated_clip_fraction / gradient_accumulation_steps,
+                    "train/grad_norm": grad_norm,
+                    "train/mean_response_length": batch_mean_response_length
+                }, step=grpo_step)
 
         load_policy_into_vllm_instance(model, vllm)
         if grpo_step % grpo_eval_freq == 0:
@@ -208,8 +223,8 @@ def train_grpo():
                 "eval/correct format with wrong answer": overview["answer_wrong"],
                 "eval/wrong format": overview["format_wrong"],
                 "eval/accuracy": overview["correct"] / overview["count"],
-                "eval/step": grpo_step
-            })
+                "eval/avg_length": overview["avg_length"]
+            }, step=grpo_step)
 
 def evaluate_vllm(
     vllm_model: LLM,
@@ -220,10 +235,12 @@ def evaluate_vllm(
 ):
     responses = run_vllm(vllm_model, prompts, eval_sampling_params)
     allinfo_dict_list = []
+    total_length = 0
     for response, answer, prompt in zip(responses, answers, prompts):
         extracted_answer = extract_reference_answer(answer)
         reward_dict = reward_fn(response, extracted_answer)
         allinfo_dict_list.append(reward_dict)
+        total_length += len(response)
     overview = {"correct":0, "format_wrong":0, "answer_wrong":0, "count":0}
     for reward in allinfo_dict_list:
         overview["count"] += 1
@@ -233,6 +250,7 @@ def evaluate_vllm(
             overview["answer_wrong"] += 1
         else:
             overview["format_wrong"] += 1
+    overview["avg_length"] = total_length/overview["count"]
     return overview
     
         

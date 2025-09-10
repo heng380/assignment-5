@@ -117,7 +117,8 @@ def grpo_microbatch_train_step_seq_level_loss(
         cliprange: float | None=None
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     loss, metadata = compute_policy_gradient_loss(policy_log_probs, loss_type, raw_rewards, advantages, old_log_probs, cliprange)
-    loss = masked_normalize(loss, response_mask)
+    constant = response_mask.sum(dim=-1).max().item()
+    loss = masked_normalize(loss, response_mask, dim=-1, normalize_constant=constant).mean()
     loss /= gradient_accumulation_steps  # loss是相加的, 所以需要除以steps
     loss.backward()
     return loss, metadata

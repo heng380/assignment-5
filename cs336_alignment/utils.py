@@ -74,7 +74,7 @@ def masked_normalize(
         dim: int | None=None,
         normalize_constant: float = 1.0,
 ) -> torch.Tensor:
-    masked_tensor = torch.where(mask, tensor, torch.zeros_like(tensor)) # b s v
+    masked_tensor = torch.where(mask, tensor, torch.zeros_like(tensor)) # b s
     return torch.sum(masked_tensor, dim=dim) / normalize_constant
 
 def compute_entropy(logits: torch.Tensor) -> torch.Tensor:
