@@ -1,5 +1,5 @@
 # CS336 Spring 2025 Assignment 5: Alignment
-
+experiments record doc: https://tdu8is5la6.feishu.cn/docx/CksDd8zrHomlARx56MxctVfUncf
 ## sft result
 ![alt text](image.png)
 
