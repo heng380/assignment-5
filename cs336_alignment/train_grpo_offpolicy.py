@@ -16,15 +16,15 @@ from transformers import PreTrainedTokenizerBase
 import torch.nn as nn
 
 n_grpo_steps = 200
-learning_rate = 1.7e-5
+learning_rate = 3e-5
 advantage_eps = 1e-6
-rollout_batch_size = 256     # 一个grpo step一共多少训练多少样本
+rollout_batch_size = 256     # 一个grpo step一共多少batch
 group_size = 8
 sampling_temperature = 1.0
 sampling_min_tokens = 4
 sampling_max_tokens = 1024
-epochs_per_rollout_batch = 3   # on policy
-train_batch_size = 256        # 1 rollout, 1 step
+epochs_per_rollout_batch = 1   # on/off policy
+train_batch_size = 256
 gradient_accumulation_steps = 32 # microbatch=8
 gpu_memory_utilization = 0.95
 # loss_type = "no_baseline"
@@ -43,8 +43,8 @@ MATH_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/train.jsonl"
 SEED = 69
 torch.manual_seed(SEED)
 random.seed(SEED)
-device_train = "cuda:0"
-device_vllm = "cuda:1"
+device_train = "cuda:2"
+device_vllm = "cuda:3"
 
 ANS_RE = re.compile(r"####\s*([\-0-9\.\,]+)")
 
@@ -62,8 +62,8 @@ def train_grpo():
     assert train_batch_size >= group_size, "train_batch_size must be greater than or equal to group_size"
     n_microbatches_per_rollout_batch = rollout_batch_size // micro_train_batch_size
 
-    wandb.init(project="cs336-grpo_seq_loss",
-        name=f"grpo_lr_3e-5_seq_loss_no_std_epoch3",
+    wandb.init(project="cs336-grpo_on_off_policy",
+        name=f"grpo_off_epoch1_train_batch256_lr3e-5",
         config={
             "n_grpo_steps": n_grpo_steps
             }
@@ -134,7 +134,7 @@ def train_grpo():
                     "sampling/avg_reward": metadata["mean"].item(),
                     
                 }, step=grpo_step)
-        num_train_steps_per_epoch = rollout_batch_size // train_batch_size    #一个rollout一共进行多少次梯度下降
+        num_train_steps_per_epoch = rollout_batch_size // train_batch_size #rollout total num
 
         # get per token log probs on old model
         with torch.no_grad():

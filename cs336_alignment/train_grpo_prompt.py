@@ -8,7 +8,7 @@ from vllm import LLM, SamplingParams
 import random
 import json
 from cs336_alignment.utils import tokenize_prompt_and_output, get_response_log_probs, masked_normalize, compute_entropy, sft_microbatch_train_step
-from drgrpo_grader import r1_zero_reward_fn
+from drgrpo_grader import r1_zero_reward_fn, question_only_reward_fn
 from typing import Callable, List, Tuple
 import re
 from baseline import run_vllm
@@ -16,14 +16,14 @@ from transformers import PreTrainedTokenizerBase
 import torch.nn as nn
 
 n_grpo_steps = 200
-learning_rate = 1.7e-5
+learning_rate = 1e-5
 advantage_eps = 1e-6
 rollout_batch_size = 256     # 一个grpo step一共多少训练多少样本
 group_size = 8
 sampling_temperature = 1.0
 sampling_min_tokens = 4
 sampling_max_tokens = 1024
-epochs_per_rollout_batch = 3   # on policy
+epochs_per_rollout_batch = 1   # on policy
 train_batch_size = 256        # 1 rollout, 1 step
 gradient_accumulation_steps = 32 # microbatch=8
 gpu_memory_utilization = 0.95
@@ -36,15 +36,15 @@ grpo_eval_freq = 8
 grpo_num_eval_samples = 1024
 
 QWEN_MATH_BASE_PATH = "/home/ubuntu/model/Qwen2.5-Math-1.5B"
-PROMPT_PATH = "/home/ubuntu/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
+PROMPT_PATH = "/home/ubuntu/repos/assignment-5/cs336_alignment/prompts/question_only.prompt"
 TEST_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/test.jsonl"
 OUTPUT_PATH = "/home/ubuntu/repos/assignment-5/data/grpo"
 MATH_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/train.jsonl"
 SEED = 69
 torch.manual_seed(SEED)
 random.seed(SEED)
-device_train = "cuda:0"
-device_vllm = "cuda:1"
+device_train = "cuda:2"
+device_vllm = "cuda:3"
 
 ANS_RE = re.compile(r"####\s*([\-0-9\.\,]+)")
 
@@ -63,7 +63,7 @@ def train_grpo():
     n_microbatches_per_rollout_batch = rollout_batch_size // micro_train_batch_size
 
     wandb.init(project="cs336-grpo_seq_loss",
-        name=f"grpo_lr_3e-5_seq_loss_no_std_epoch3",
+        name=f"grpo_lr_3e-5_seq_loss_no_std_noprompt_1e-5",
         config={
             "n_grpo_steps": n_grpo_steps
             }
@@ -112,7 +112,7 @@ def train_grpo():
         input_ids, labels, response_mask = tokenizations["input_ids"].to(device_train), tokenizations["labels"].to(device_train), tokenizations["response_mask"].to(device_train)
         
         print (f"response_mask.shape: {response_mask.shape}")
-        advantages_train, raw_rewards_train, metadata = compute_group_normalized_reward(r1_zero_reward_fn, 
+        advantages_train, raw_rewards_train, metadata = compute_group_normalized_reward(question_only_reward_fn, 
                                                                                         rollout_responses=responses, 
                                                                                         repeated_ground_truths=repeated_answers,
                                                                                         group_size=group_size,
@@ -219,7 +219,7 @@ def train_grpo():
             prompts = [data["prompt"] for data in test_data]
             answers = [data["answer"] for data in test_data]
             sampling_params = SamplingParams(temperature=1.0, top_p=1.0, max_tokens=1024, stop=["</answer>"], include_stop_str_in_output=True)
-            overview = evaluate_vllm(vllm, r1_zero_reward_fn, prompts, answers, sampling_params)
+            overview = evaluate_vllm(vllm, question_only_reward_fn, prompts, answers, sampling_params)
 
             wandb.log({
                 "eval/correct": overview["correct"],

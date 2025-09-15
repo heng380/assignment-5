@@ -44,6 +44,20 @@ def compute_naive_policy_gradient_loss(
 
     return loss
 
+def compute_grpo_no_clip_loss(
+    advantages: torch.Tensor,
+    policy_log_probs: torch.Tensor,
+    old_log_probs: torch.Tensor,
+    cliprange: float
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    pi_ratio = torch.exp(policy_log_probs - old_log_probs)
+    batch_size, seq_len = policy_log_probs.shape
+    advantages = repeat(advantages, "b 1 -> b s", s=seq_len)
+    v = pi_ratio * advantages
+
+    meta = {"cliped": v>=10}
+    return -v, meta
+ 
 def compute_grpo_clip_loss(
     advantages: torch.Tensor,
     policy_log_probs: torch.Tensor,
@@ -74,6 +88,11 @@ def compute_policy_gradient_loss(
         assert old_log_probs is not None
         assert cliprange is not None
         return compute_grpo_clip_loss(advantages, policy_log_probs, old_log_probs, cliprange)
+    elif loss_type == "grpo_no_clip":
+        assert advantages is not None
+        assert old_log_probs is not None
+        assert cliprange is not None
+        return compute_grpo_no_clip_loss(advantages, policy_log_probs, old_log_probs, cliprange)
     elif loss_type == "no_baseline":
         assert raw_rewards is not None
         return compute_naive_policy_gradient_loss(raw_rewards, policy_log_probs), {}
