@@ -15,15 +15,15 @@ from baseline import run_vllm
 from transformers import PreTrainedTokenizerBase
 import torch.nn as nn
 
-n_grpo_steps = 200
-learning_rate = 1.7e-5
+n_grpo_steps = 129
+learning_rate = 3e-5
 advantage_eps = 1e-6
 rollout_batch_size = 256     # 一个grpo step一共多少训练多少样本
 group_size = 8
 sampling_temperature = 1.0
 sampling_min_tokens = 4
 sampling_max_tokens = 1024
-epochs_per_rollout_batch = 3   # on policy
+epochs_per_rollout_batch = 1   # on policy
 train_batch_size = 256        # 1 rollout, 1 step
 gradient_accumulation_steps = 32 # microbatch=8
 gpu_memory_utilization = 0.95
@@ -35,11 +35,11 @@ cliprange = 0.2
 grpo_eval_freq = 8
 grpo_num_eval_samples = 1024
 
-QWEN_MATH_BASE_PATH = "/home/ubuntu/model/Qwen2.5-Math-1.5B"
-PROMPT_PATH = "/home/ubuntu/repos/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
-TEST_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/test.jsonl"
-OUTPUT_PATH = "/home/ubuntu/repos/assignment-5/data/grpo"
-MATH_DATA_PATH = "/home/ubuntu/repos/assignment-5/data/gsm8k/train.jsonl"
+QWEN_MATH_BASE_PATH = "/home/ubuntu/hengcao/model/Qwen2.5-Math-1.5B"
+PROMPT_PATH = "/home/ubuntu/hengcao/assignment-5/cs336_alignment/prompts/r1_zero.prompt"
+TEST_DATA_PATH = "/home/ubuntu/hengcao/assignment-5/data/gsm8k/test.jsonl"
+OUTPUT_PATH = "/home/ubuntu/hengcao/assignment-5/data/grpo"
+MATH_DATA_PATH = "/home/ubuntu/hengcao/assignment-5/data/gsm8k/train.jsonl"
 SEED = 69
 torch.manual_seed(SEED)
 random.seed(SEED)
@@ -62,8 +62,8 @@ def train_grpo():
     assert train_batch_size >= group_size, "train_batch_size must be greater than or equal to group_size"
     n_microbatches_per_rollout_batch = rollout_batch_size // micro_train_batch_size
 
-    wandb.init(project="cs336-grpo_seq_loss",
-        name=f"grpo_lr_3e-5_seq_loss_no_std_epoch3",
+    wandb.init(project="cs336-grpo_variant",
+        name=f"grpo_baseline_lr_3e-5_seq_loss_no_std_epoch1",
         config={
             "n_grpo_steps": n_grpo_steps
             }

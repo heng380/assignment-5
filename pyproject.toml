@@ -31,7 +31,7 @@ no-build-isolation-package = ["flash-attn"]
 
 
 [tool.uv.sources]
-alpaca-eval = { path = "../alpaca_eval" }
+alpaca-eval = { path = "./alpaca_eval" }
 
 [tool.pytest.ini_options]
 log_cli = true

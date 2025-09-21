@@ -9,6 +9,8 @@ from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase
 from cs336_alignment.utils import *
 from cs336_alignment.grpo import *
+from cs336_alignment.alignment.mmlu_baseline import *
+from cs336_alignment.alignment.instruction_finetune import *
 # tokenize_prompt_and_output, compute_entropy, masked_normalize, sft_microbatch_train_step
 
 
@@ -317,6 +319,7 @@ def get_packed_sft_dataset(
         "input_ids" contains the token IDs for the language modeling inputs, and "labels" contains
         the token IDs for the language modeling labels.
     """
+    return PackedSFTDataset(tokenizer, dataset_path, seq_length, shuffle)
     raise NotImplementedError
 
 
@@ -366,6 +369,7 @@ def run_parse_mmlu_response(
         str (one of "A", "B", "C", or "D") if the model output can be parsed into a prediction,
         else None.
     """
+    return parse_mmlu_answer(model_output)
     raise NotImplementedError
 
 

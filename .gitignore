@@ -168,3 +168,7 @@ cython_debug/
 
 *.jsonl
 wandb/
+alpaca_eval/
+wb.py
+*.whl
+sft/
