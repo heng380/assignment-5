@@ -11,6 +11,7 @@ from cs336_alignment.utils import *
 from cs336_alignment.grpo import *
 from cs336_alignment.alignment.mmlu_baseline import *
 from cs336_alignment.alignment.instruction_finetune import *
+from cs336_alignment.alignment.dpo import *
 # tokenize_prompt_and_output, compute_entropy, masked_normalize, sft_microbatch_train_step
 
 
@@ -123,6 +124,7 @@ def run_get_response_log_probs(
                 we have not masked out the token indices corresponding to the prompt
                 or padding; that is done in the train loop.
     """
+    return get_response_log_probs(model, input_ids, labels, return_token_entropy)
     raise NotImplementedError
 
 
@@ -399,6 +401,7 @@ def run_compute_per_instance_dpo_loss(
     response_chosen: str,
     response_rejected: str,
 ) -> torch.Tensor:
+    return compute_per_instance_dpo_loss(lm, lm_ref, tokenizer, prompt, response_chosen, response_rejected, beta)
     """
     Given two language models (`lm`, and the "reference model" `lm_ref`),
     their tokenizer, the DPO beta hyperparameter, a prompt and a pair

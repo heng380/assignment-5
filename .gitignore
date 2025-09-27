@@ -172,3 +172,4 @@ alpaca_eval/
 wb.py
 *.whl
 sft/
+out/

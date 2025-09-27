@@ -7,7 +7,8 @@ import tqdm
 import os
 import argparse
 
-MODEL_PATH = "/cfs/hengcao/meta-llama"
+# MODEL_PATH = "/cfs/hengcao/meta-llama"
+MODEL_PATH = "/home/ubuntu/hengcao/assignment-5/cs336_alignment/alignment/out/dpo/checkpoint-500"
 MMLU_PATH = "/home/ubuntu/hengcao/assignment-5/data/mmlu/test"
 PROMPT = 'Answer the following multiple choice question about {subject}. Respond with a single sentence of the form "The correct answer is _", filling the blank with the letter corresponding to the correct answer (i.e., A, B, C or D).\n\n'
 
